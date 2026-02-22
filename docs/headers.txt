@@ -1,0 +1,23 @@
+Many files used in Petroglyph's games, from models and animations to maps and templates, have a hierarchical file structure. Regardless of the contents of the file, all these files share the same base structure: a tree. The chunked file format describes how this tree is stored in the files. 
+
+The basic element in the chunked file format is a chunk. A chunk represents a node in the file tree. It can either have data, or other chunks as children. At the top-level, each file can have multiple root chunks.
+
+Each chunk is described via a header:
+
+
+Header:
+  +0000h  type      uint32      ; Type of the chunk
+  +0004h  size      uint32      ; Size of the chunk, in bytes
+
+The type is completely file-specific. This allows the program to parse the file. The size indicates the size of the body of this chunk, which immediately follows the header. This body can contain data or be completely filled with other chunks. To distinguish between these cases, the high bit (bit 31) of the size field is used. If it is set, the chunk contains child chunks. If it is clear, the chunks contains simple data. Note that because of this, bit 31 must be ignored when you want to know the size of the chunk body.
+
+Each chunk and chunked file begins with this chunk header. If the chunk body does not fill up the entire chunk or file, there is another chunk behind it.
+
+Sometimes, chunks contain very little data. To avoid the overhead of the chunk header, mini-chunks are used. This a format which is used on chunks that contain plain data. Just like normal chunks that contain children, these chunks are entirely chopped up into mini-chunks. However, each mini-chunk has a smaller header:
+
+
+Mini-chunk Header:
+  +0000h  type      byte      ; Type of the mini-chunk
+  +0001h  size      byte      ; Size of the mini-chunk, in bytes
+
+Since mini-chunks cannot contain children, all eight bits of the size field are used for the size. Note that there is no reliable way to distinguish between chunks with data and chunks with mini-chunks. This distinction is part of the file format that is used on top of the Chunked file format.

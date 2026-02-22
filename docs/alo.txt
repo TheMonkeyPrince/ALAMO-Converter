@@ -1,0 +1,206 @@
+Alamo Object File Format
+
+Alamo Object Files (extension: .ALO) in Petroglyph's games describe a 3D model. It is a collection of bones, meshes with effects, proxies and dazzles. Alamo Object Files are an instance of Chunked Files.
+Each Alamo Object File has a skeleton, several objects (meshes and/or lights) and a list of proxies and object connections. Object files with this format are used in the game "Star Wars: Empire at War" and its expansion pack "Star Wars: Empire at War: Forces of Corruption."
+
+00000200h: Skeleton
+This chunk is the container chunk for the skeleton of the model
+
+    00000201h: Bone count
+    dword     numBones
+    byte[124] zero
+
+    The first four bytes of this chunk are a 32-bit integer that hold the number of bone nodes in the skeleton. This chunk is always 128 bytes large, hence the padding.
+
+    00000202h: Bone
+    This chunk is the container chunk for a bone in the skeleton
+
+    00000203h: Name
+    string name
+
+    This chunk holds the bone's name as an ASCIIZ string
+
+    00000205h: Bone v1
+    int       parent
+    dword     visible
+    float4[3] matrix
+
+    This chunk holds the bone information. It is identical to the 0x206 bone type, but without the billboard field, which should be assumed to be zero.
+
+    00000206h: Bone v2
+    int       parent
+    dword     visible
+    dword     billboard
+    float4[3] matrix
+
+    This chunk holds the bone information; the parent bone index (which is always less than this bone's index), whether or not the meshes and/or proxies attached to this bone (and its children) are visible, the billboard mode, and the transformation matrix. The matrix, stored row-wise, contains 3 rows of 4 columns each. After reading these rows, the 4th row should be (0,0,0,1) to create a transposed Direct3D-compatible 4x4 matrix that defines this bone's local transformation (i.e., relative to its parent).
+
+00000400h: Mesh
+
+This chunk is the container chunk for a mesh in the model.
+
+    00000401h: Mesh name
+    string name
+
+    This chunk contains the mesh's name as a single ASCIIZ string.
+
+    00000402h: Mesh information
+    dword     nMaterials
+    float3[2] boundingBox
+    dword     unused
+    dword     isHidden
+    dword     isCollisionEnabled
+    byte[88]  zero
+
+    This chunk contains basic information about the mesh: the number of materials (sub-meshes; 0x10100 and 0x10000 chunk pairs) in this mesh, the bounding box for this mesh, whether this mesh is initially hidden and whether this mesh can be collided with (i.e., whether the mesh's sub-meshes have collision trees; 0x1200 chunks). The bounding box is stored as 6 floating point values: two X,Y,Z triples for the minimum and maximum points of the box, respectively. Note that this chunk is always 128 bytes large. Hence the zero padding.
+
+    00010100h: Sub-mesh material information
+
+    This chunks contains chunks that identify the Direct3D Shader file to be used when rendering this mesh and its parameters. Shader parameters have a name, type and data and should be used with the GetParameterByName and SetInt, SetFloat, SetFloatArray, SetTexture, etc. functions.
+
+        00010101h: Shader filename
+        string name
+
+        This chunk contains the shader's filename as an ASCIIZ string. Note that this filename may reference the source file. To obtain the filename to the compiled effect file if the source file is not present, substitute the .fx extension with the .fxo extension.
+
+        00010102h: Shader parameter: INT
+        01: string name
+        02: dword  value
+
+        This chunk contains a shader parameter, of type INT. The parameter data is a single 32-bit signed integer. The name and data of the parameter are stored in mini chunks. The mini-chunk type of the name and parameter data is 01h and 02h, respectively.
+
+        00010103h: Shader parameter: FLOAT
+        01: string name
+        02: float  value
+
+        This chunk contains a shader parameter, of type FLOAT. The parameter data is a single 32-bit IEEE 754 floating point value. The name and data of the parameter are stored in mini chunks. The mini-chunk type of the name and parameter data is 01h and 02h, respectively.
+
+        00010104h: Shader parameter: FLOAT3
+        01: string name
+        02: float3 value
+
+        This chunk contains a shader parameter, of type FLOAT3. The parameter data is three consecutive 32-bit IEEE 754 floating point values. The name and data of the parameter are stored in mini chunks. The mini-chunk type of the name and parameter data is 01h and 02h, respectively.
+
+        00010105h: Shader parameter: TEXTURE
+        01: string name
+        02: string value
+
+        This chunk contains a shader parameter, of type TEXTURE. The parameter data is the texture's filename as an ASCIIZ string. Note that this filename may reference the source file. To obtain the filename to the prepared texture file if the source file cannot be found, substitute the extension with the 'dds' extension. The name and data of the parameter are stored in mini chunks. The mini-chunk type of the name and parameter data is 01h and 02h, respectively.
+
+        00010106h: Shader parameter: FLOAT4
+        01: string name
+        02: float4 value
+
+        This chunk contains a shader parameter, of type FLOAT4. The parameter data is four consecutive 32-bit IEEE 754 floating point values. The name and data of the parameter are stored in mini chunks. The mini-chunk type of the name and parameter data is 01h and 02h, respectively.
+
+    00010000h: Sub-mesh data
+
+    This chunk is the container chunk for the core sub-mesh data: vertices, indices, animation mappings and collision tree.
+
+        00010001h: Sub-mesh information
+        dword     nVertices
+        dword     nPrimitives
+        byte[120] zero
+
+        The first eight bytes of this chunks are two 32-bit integers that hold the number of vertices and triangles in the mesh, respectively. This chunk is always 128 bytes large, hence the padding.
+
+        00010002h: Vertex format
+        string format
+
+        This chunk contains the format of the vertices that is desired by this sub-mesh as an ASCIIZ string. The vertex array always holds the same information while only a fraction may be used by the actual sub-mesh. This vertex format can be used as an index to set up a mapping to copy the desired bits of information from the vertex array in the file.
+
+        00010004h: Index buffer
+        word[3 * nPrimitives] indices
+
+        This chunk contains the index buffer that is used to render the primitives of the mesh. The index buffer is an array of 16-bit indices into the vertex buffer located in the same 0x10000 node. The size of this chunk (in bytes) is equal to the number of primitives in the 0x10001 chunk times 6.
+
+        00010005h: Vertex buffer v1
+
+        This chunk is a rare variant of the 0x10007 chunk, and also contains an array of vertices. However, each vertex is missing the "unused" field.
+
+        00010006h: Animation mapping
+        dword[1..24] bone
+
+        This chunk contains between 1 and 24 32-bit integers that are indices into the bones in the skeleton (0x200 chunk). During runtime, the actual values of these bones (which can change due to animations) must be passed to the renderer as the matrix palette for this sub-mesh.
+
+        00010007h: Vertex buffer v2
+        float3    position
+        float3    normal
+        float2[4] texCoords
+        float3    tangent
+        float3    binormal
+        float4    color
+        float4    unused
+        dword[4]  boneIndices
+        float[4]  boneWeights
+
+        This chunk holds an array of vertices, where each vertex has the structure as described above. The number of vertices in this array is specified in the 0x10001 chunk. Note however, that although there is space for 4 bone-indices, only the first is every used. Therefore, boneWeights is always [1, 0, 0, 0]. These bone indices are indices into the animation mapping array (0x10006 chunk).
+
+    00001200h: Collision box tree
+
+    This chunk, which is only present if the mesh information (0x402) chunk's "isCollisionEnabled" field is non-zero, holds a spatial tree that can be traversed in logarithmic time with integer comparison to do collision detection.
+
+        00001201h: Tree info
+        00: float3 collisionBoxMin
+        01: float3 collisionBoxMax
+        02: dword  nNodes
+        03: dword  nPrimitives
+
+        This chunk contains four mini-chunks which describe the reference box for the collision detection (00 and 01 mini-chunks) and define the number of records in the 0x1202 and 0x1203 chunks (02 and 03 mini-chunks, respectively).
+
+        00001202h: Tree nodes
+        byte3 min
+        byte3 max
+        word  nPrimitives
+        word  link
+
+        Each node is is associated with a sub-region of it's container box. The coordinates of this sub-box are stored as 8-bit values. These values are normalized to the volume of the node's parent box. In other words, the coordinate span (0,0,0) - (255,255,255) indicates the same box as the parent node. If nPrimitives is greater than zero, the link field points into the mapping array defined in the 0x1203 chunk and the nPrimitives value indicates how many subsequent triangles are contained in this leaf. If nPrimitives is zero, the link value points into this array, to the two children of this node. Therefore, the children of node #x are defined as the nodes with indices nodes[x].link and nodes[x].link + 1.
+
+        00001203h: Triangle mapping
+        word[nPrimitives] triangles
+
+        This chunk contains an array of 16-bit integers that map 1-on-1 to actual triangles in the model.
+
+00001300h: Light
+
+This chunks describes a single light object.
+
+    00001301h: Light name
+    string name
+
+    This chunks contains the light's name as an ASCIIZ string.
+
+    00001302h: Light data
+    dword  type
+    float3 color
+    float  intensity
+    float  farAttenuationEnd
+    float  farAttenuationStart
+    float  hotspotSize
+    float  falloffSize
+
+    This chunk stores the light description as the values mentioned above. The type can be 0 (Omni light), 1 (Directional light) or 2 (Spotlight). The color is stored as an RGB triplet with each element in the range 0.0 - 1.0. Furthermore, the hotspotSize and falloffSize are both in radians.
+
+00000600h: Connections
+
+This chunk is the container for the mapping that defines what bones meshes, lights and proxies are connected to.
+
+    00000601h: Connection counts
+    01: dword nObjects
+    04: dword nProxies
+
+    This chunk contains two 32-bit integer mini-chunks of type 01h and 04h that indicate the number of 0x602 and 0x603 chunks, respectively.
+
+    00000602h: Object connection
+    02: dword object
+    03: dword bone
+
+    This chunk contains the index of a mesh or light object and the index of a bone to indicate that the specified mesh or light is connected to the position of the specified bone. Mesh/light indices are determined from the order in which the 0x400 and 0x600 chunks appeared in the file.
+
+    00000603h: Proxy connection
+    05: string proxy
+    06: dword  bone
+    07: dword  isHidden
+    08: dword  altDecreaseStayHidden
+
+    This chunk contains the name of a proxy object and the index of a bone to indicate that the specified proxy object is connected to the specified bone. The isHidden and altDecreaseStayHidden values indicate if this proxy is initially hidden and if the "Alt Decrease Stay Hidden" property is set for this proxy.
