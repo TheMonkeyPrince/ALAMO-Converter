@@ -54,8 +54,9 @@ class ALOParser:
     def __init__(self, path):
         self.path = Path(path)
         self.dir = self.path.parent
-        self.textures = []
-        self.shaders = []
+        # store resolved absolute paths (unique)
+        self.textures = set()
+        self.shaders = set()
         self.meshes = []
 
     def parse(self):
@@ -139,7 +140,9 @@ class ALOParser:
                 name = read_string_from_bytes(data) + "o" # add 'o' suffix to match actual shader files
                 mat['shader'] = name
                 if name:
-                    self.shaders.append(self._resolve_ref(name, search_folder='..\\Shaders'))
+                    resolved = self._resolve_ref(name, search_folder='..\\Shaders')
+                    if resolved:
+                        self.shaders.add(resolved)
             else:
                 # try parse as sequence of mini-chunks
                 off = 0
@@ -159,10 +162,17 @@ class ALOParser:
                         except Exception:
                             val = None
                         if last_name:
-                            mat['params'][last_name] = val
-                            # if appears to be a texture filename
+                            # attempt to resolve texture references immediately
                             if isinstance(val, str) and val.strip():
-                                self.textures.append(self._resolve_ref(val, search_folder='..\\Textures'))
+                                resolved = self._resolve_ref(val, search_folder='..\\Textures')
+                                if resolved:
+                                    mat['params'][last_name] = resolved
+                                    self.textures.add(resolved)
+                                else:
+                                    # keep original string when resolution fails
+                                    mat['params'][last_name] = val
+                            else:
+                                mat['params'][last_name] = val
             # continue
         return mat
 
@@ -171,10 +181,13 @@ class ALOParser:
         # If absolute already, return as-is.
         if not filename:
             return None
-        # try search_folder relative
-        cand2 = (self.dir / search_folder / filename).resolve()
-        if cand2.exists():
-            return str(cand2)
+        # Only look in the provided search_folder relative to the ALO file
+        cand = self.dir / search_folder / filename
+        try:
+            if cand.exists():
+                return str(cand.resolve())
+        except Exception:
+            pass
         print("Warning: Referenced file not found:", filename)
         return None
 
@@ -250,6 +263,8 @@ def build_glb(parser, out_path):
         'textures': [],
     }
     bin_blob = bytearray()
+    # cache to avoid embedding the same image multiple times
+    image_cache = {}
 
     def add_bufferview(data, target=None):
         off = align4(len(bin_blob))
@@ -319,25 +334,66 @@ def build_glb(parser, out_path):
                 if isinstance(v, str) and v.strip():
                     p = v; break
             if p:
+                # resolve only from ../Textures (do not look elsewhere)
                 img_path = parser._resolve_ref(p, '..\\Textures')
-                # try load
-                try:
-                    with open(img_path, 'rb') as imf:
-                        imdata = imf.read()
-                except Exception:
-                    imdata = b''
-                if imdata:
-                    mime = 'image/png'
-                    ext = Path(img_path).suffix.lower()
-                    if ext in ('.jpg', '.jpeg'):
-                        mime = 'image/jpeg'
-                    elif ext == '.dds':
-                        mime = 'image/vnd-ms.dds'
-                    img_bv = add_bufferview(imdata)
-                    img_idx = len(json_doc['images'])
-                    json_doc['images'].append({'bufferView': img_bv, 'mimeType': mime, 'name': Path(img_path).stem})
-                    tex_idx = len(json_doc['textures'])
-                    json_doc['textures'].append({'source': img_idx})
+
+                img_idx = None
+                tex_idx = None
+                if img_path and Path(img_path).exists():
+                    # reuse previously embedded image if present
+                    if img_path in image_cache:
+                        img_idx, tex_idx = image_cache[img_path]
+                    else:
+                        try:
+                            with open(img_path, 'rb') as imf:
+                                imdata = imf.read()
+                        except Exception:
+                            imdata = b''
+                        if imdata:
+                            mime = 'image/png'
+                            ext = Path(img_path).suffix.lower()
+                            # prefer common web formats
+                            if ext in ('.jpg', '.jpeg'):
+                                mime = 'image/jpeg'
+                                img_bytes = imdata
+                            elif ext == '.png':
+                                mime = 'image/png'
+                                img_bytes = imdata
+                            elif ext == '.dds':
+                                # try to convert DDS -> PNG using Pillow if available
+                                try:
+                                    from PIL import Image
+                                    import io
+                                    with Image.open(img_path) as im:
+                                        buf = io.BytesIO()
+                                        im.save(buf, format='PNG')
+                                        img_bytes = buf.getvalue()
+                                        mime = 'image/png'
+                                except Exception:
+                                    # fallback to embedding original DDS (may not be supported by some importers)
+                                    img_bytes = imdata
+                                    mime = 'image/vnd-ms.dds'
+                            else:
+                                # unknown extension: embed as PNG by default if possible, else raw
+                                try:
+                                    from PIL import Image
+                                    import io
+                                    with Image.open(img_path) as im:
+                                        buf = io.BytesIO()
+                                        im.save(buf, format='PNG')
+                                        img_bytes = buf.getvalue()
+                                        mime = 'image/png'
+                                except Exception:
+                                    img_bytes = imdata
+                                    mime = 'application/octet-stream'
+                            img_bv = add_bufferview(img_bytes)
+                            img_idx = len(json_doc['images'])
+                            json_doc['images'].append({'bufferView': img_bv, 'mimeType': mime, 'name': Path(img_path).stem})
+                            tex_idx = len(json_doc['textures'])
+                            json_doc['textures'].append({'source': img_idx})
+                            image_cache[img_path] = (img_idx, tex_idx)
+
+                if tex_idx is not None:
                     mat_idx = len(json_doc['materials'])
                     json_doc['materials'].append({'pbrMetallicRoughness': {'baseColorTexture': {'index': tex_idx}, 'metallicFactor': 0.0}})
             if mat_idx is None:
@@ -395,7 +451,7 @@ def main():
     if not alo.exists():
         print('Input ALO not found:', alo)
         sys.exit(1)
-    out = args.out or (alo.with_suffix('.glb'))
+    out = args.out or (alo.name.removesuffix('.alo') + '.glb')
     parser = ALOParser(alo)
     parser.parse()
 
